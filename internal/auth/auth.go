@@ -31,12 +31,13 @@ type Service struct {
 }
 
 const (
-	RESEND        = "resend"
-	ADDSERVICE    = "addservice"
-	DELETESERVICE = "deleteservice"
-	TERMINATE     = "terminate"
-	SPLUNKADDHEC  = "splunkaddhec"
-	GETHECCONFIG  = "gethecconfig"
+	RESEND             = "resend"
+	ADDSERVICE         = "addservice"
+	DELETESERVICE      = "deleteservice"
+	TERMINATE          = "terminate"
+	SPLUNKADDHEC       = "splunkaddhec"
+	GETHECCONFIG       = "gethecconfig"
+	SPLUNKADDCONTAINER = "splunkaddcontainer"
 )
 
 type SplunkConfig struct {
@@ -131,6 +132,13 @@ func (d *AuthorizationClient) ResendAll() {
 func (d *AuthorizationClient) SplunkAddHEC(SplunkHttp SplunkConfig) error {
 	c := new(Command)
 	c.Command = SPLUNKADDHEC
+	c.SplunkConfig = SplunkHttp
+	return d.SendCommand(*c)
+}
+
+func (d *AuthorizationClient) SplunkAddContainer(SplunkHttp SplunkConfig) error {
+	c := new(Command)
+	c.Command = SPLUNKADDCONTAINER
 	c.SplunkConfig = SplunkHttp
 	return d.SendCommand(*c)
 }

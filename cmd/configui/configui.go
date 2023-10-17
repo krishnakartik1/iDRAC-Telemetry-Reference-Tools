@@ -244,6 +244,41 @@ func configHEC(c *gin.Context, s *SystemHandler) {
 	}
 }
 
+func addSplunkEndpoint(c *gin.Context, s *SystemHandler) {
+	var tmp MyHec
+	err := c.ShouldBind(&tmp)
+	if err != nil {
+		log.Println("Failed to parse json: ", err)
+		_ = c.AbortWithError(500, err)
+	} else {
+		var hecconfig auth.SplunkConfig
+		// s.ConfigBus.CommandQueue = "/splunkpump/config"
+		// s.ConfigBus.ResponseQueue = "/configui"
+		hecconfig.Index = tmp.Index
+		hecconfig.Url = tmp.Url
+		hecconfig.Key = tmp.Key
+		// _, err = s.ConfigBus.Set("splunkURL", tmp.Url)
+		// if err != nil {
+		// 	log.Printf("Failed to send config (splunkURL) %v", err)
+		// }
+		// _, err = s.ConfigBus.Set("splunkKey", tmp.Key)
+		// if err != nil {
+		// 	log.Printf("Failed to send config (splunkKey) %v", err)
+		// }
+		// _, err = s.ConfigBus.Set("splunkIndex", tmp.Index)
+		// if err != nil {
+		// 	log.Printf("Failed to send config (splunkIndex) %v", err)
+		// }
+		Addhec := s.AuthClient.SplunkAddContainer(hecconfig)
+		if Addhec != nil {
+			log.Println("Failed to add Splunk container for new config: ", Addhec)
+			_ = c.AbortWithError(500, err)
+		} else {
+			c.JSON(200, gin.H{"success": "true"})
+		}
+	}
+}
+
 func addSystem(c *gin.Context, s *SystemHandler) {
 	var tmp MySys
 	err := c.ShouldBind(&tmp)
@@ -404,6 +439,9 @@ func main() {
 	})
 	router.POST("/api/v1/HecConfig", func(c *gin.Context) {
 		configHEC(c, systemHandler)
+	})
+	router.POST("/api/v1/SplunkConfig", func(c *gin.Context) {
+		addSplunkEndpoint(c, systemHandler)
 	})
 	router.POST("/api/v1/KafkaConfig", func(c *gin.Context) {
 		kafkaConfig(c, systemHandler)

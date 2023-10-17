@@ -92,6 +92,9 @@
                 </div>
                 <button type="button" class="btn btn-primary" data-toggle="modal"
                     data-target="#hecModal">Config</button>
+                
+                <button type="button" class="btn btn-primary" data-toggle="modal" onclick=""
+                    data-target="#hecModal">Add Splunk</button>
 
                 <br>
                 <br>
@@ -193,6 +196,7 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
                     <button type="button" class="btn btn-primary" onclick="configHEC()">Config HEC</button>
+                    <button type="button" class="btn btn-primary" onclick="addSplunk()">Add Splunk</button>
                 </div>
             </div>
         </div>
@@ -466,6 +470,22 @@
             }
             $.ajax({
                 url: '/api/v1/HecConfig',
+                method: 'POST',
+                data: JSON.stringify(obj),
+                contentType: 'application/json',
+                dataType: 'json',
+                complete: addhec
+            })
+        }
+
+        function addSplunk() {
+            var arr = $('#newHEC').serializeArray();
+            var obj = {};
+            for (var i = 0; i < arr.length; i++) {
+                obj[arr[i].name] = arr[i].value;
+            }
+            $.ajax({
+                url: '/api/v1/SplunkConfig',
                 method: 'POST',
                 data: JSON.stringify(obj),
                 contentType: 'application/json',

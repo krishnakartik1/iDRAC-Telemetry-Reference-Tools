@@ -35,9 +35,7 @@ type SplunkEvent struct {
 	Fields SplunkEventFields `json:"fields"`
 }
 
-//
 // MEB: comment -> this appears to be racy?
-//
 var configStringsMu sync.RWMutex
 var configStrings = map[string]string{
 	"mbhost":    "activemq",
@@ -126,7 +124,7 @@ func logToSplunk(events []*SplunkEvent) {
 	for _, event := range events {
 		b, _ := json.Marshal(event)
 		builder.Write(b)
-		// log.Printf("Timestamp = %d ID = %s System = %s", event.Time, event.Fields.MetricName, event.Host)
+		log.Printf("Timestamp = %d ID = %s System = %s", event.Time, event.Fields.MetricName, event.Host)
 	}
 
 	configStringsMu.RLock()

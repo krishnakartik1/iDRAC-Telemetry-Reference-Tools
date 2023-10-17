@@ -5,3 +5,6 @@ vendor/
 
 # docker-build related files
 .env
+
+#vscode related files
+.vscode
