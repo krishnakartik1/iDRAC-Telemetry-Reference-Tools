@@ -33,7 +33,7 @@ COPY internal /build/internal
 COPY cmd/${CMD} /build/cmd/${CMD}
 COPY go.* /build/
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o app ./cmd/${CMD}
+RUN CGO_ENABLED=0 GOOS=linux go build -o app ./cmd/${CMD}
 
 FROM scratch
 
