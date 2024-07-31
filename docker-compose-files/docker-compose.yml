@@ -104,7 +104,7 @@ volumes:
 services:
   activemq:
     container_name: activemq
-    image: rmohr/activemq:latest
+    image: public.ecr.aws/conservis/rmohr/activemq:5.15.9-alpine
     profiles:
       - core
     networks:
@@ -152,7 +152,7 @@ services:
 
   mysqldb:
     container_name: mysqldb
-    image: mysql:latest
+    image: public.ecr.aws/docker/library/mysql:latest
     profiles:
       - core
     restart: always
@@ -228,7 +228,7 @@ services:
     #  present, they will be executed in lexical sort order by name."
     #
     container_name: telemetry-reference-tools-influx
-    image: influxdb:latest
+    image: public.ecr.aws/docker/library/influxdb:latest
     profiles:
       - influx-test-db
       - setup-influx-test-db
@@ -345,7 +345,7 @@ services:
     # grafana runs as root in latest version. *sigh*
     # Polystat plugin install doesnt work with prior versions of Grafana. Grafana 9.0.1 is just released on 2022-06-21
     container_name: telemetry-reference-tools-grafana
-    image: grafana/grafana:9.0.1
+    image: public.ecr.aws/bitnami/grafana:latest
     volumes:
       - grafana-storage:/var/lib/grafana
       - ./:/var/lib/grafana/grafana-polystat-panel
@@ -414,7 +414,7 @@ services:
     # TODO: add
     #
     ############################################################################
-    image: prom/prometheus:v2.36.0
+    image: public.ecr.aws/bitnami/prometheus:2.36.0
     restart: always
     container_name: prometheus
     profiles:
@@ -622,7 +622,7 @@ services:
     #   es02              | ERROR: Elasticsearch did not exit normally - check the logs at /usr/share/elasticsearch/logs/es-docker-cluster.log
     #
     ############################################################################
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.1
+    image: public.ecr.aws/elastic/elasticsearch:7.17.10
     container_name: es01
     profiles:
       - elk-test-db
@@ -647,7 +647,7 @@ services:
     #mount deployed mysql filesystem location for persistance
 
   es02:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.1
+    image: public.ecr.aws/elastic/elasticsearch:7.17.10
     container_name: es02
     profiles:
       - elk-test-db
@@ -666,7 +666,7 @@ services:
     #mount deployed mysql filesystem location for persistance
 
   es03:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.1
+    image: public.ecr.aws/elastic/elasticsearch:7.17.10
     container_name: es03
     profiles:
       - elk-test-db
@@ -685,7 +685,7 @@ services:
     #mount deployed mysql filesystem location for persistance
 
   kib01:
-    image: docker.elastic.co/kibana/kibana:7.10.1
+    image: public.ecr.aws/elastic/kibana:7.17.10
     container_name: kib01
     profiles:
       - elk-test-db
