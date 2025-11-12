@@ -1,4 +1,4 @@
-version: "3.9"
+
 
 ######
 # core services: activemq, mysqldb, configui, dbdiscauth, redfishread
@@ -23,10 +23,15 @@ version: "3.9"
 x-env-mysql: &mysql-env
   MYSQL_DATABASE: "telemetrysource_services_db"
   MYSQL_USER: "reftools"
-  MYSQL_PASSWORD:
+  MYSQL_PASSWORD: 
   MYSQL_HOST: "mysqldb"
   MYSQL_HOST_PORT: "3306"
 
+x-env-victoria: &victoria-env
+  VICTORIA_USERNAME: ""
+  VICTORIA_PASSWORD: ""
+  VICTORIA_METRICS_URL: http://172.0.0.1:8428/api/v1/import/prometheus
+   
 x-env-messagebus: &messagebus-env
   MESSAGEBUS_HOST: activemq
   MESSAGEBUS_PORT: 61613
@@ -100,6 +105,8 @@ volumes:
   prometheus-data:
   mysqldb-volume:
   dashboards:
+  victoria-metrics-data:
+  
 
 services:
   activemq:
@@ -199,12 +206,73 @@ services:
   redfishread:
     <<: *refdaemon
     image: idrac-telemetry-reference-tools/redfishread:latest
+    environment:
+      INCLUDE_ALERTS: ${INCLUDE_ALERTS}
     build:
       <<: *base-build
       args:
         <<: *base-args
         CMD: redfishread
+  
+  victoriapump-standalone: &victoriapump
+    ############################################################################
+    # VICTORIA PUMP - data pump to push telemetry into VictoriaMetrics
+    #    This can be manually started with:
+    #      --profile victoria-pump
+    #
+    # If you want to connect to an external VictoriaMetrics instance,
+    # set the following environment variable:
+    #
+    #   VM_PUSH_URL=http://<victoria-host>:8428/api/v1/import/prometheus
+    #
+    ############################################################################
+    <<: *refdaemon
+    image: idrac-telemetry-reference-tools/victoriapump:latest
+    profiles:
+      - victoria-pump
+    depends_on:
+      - activemq
+    environment:
+      <<: [*messagebus-env, *victoria-env]
+      MESSAGEBUS_HOST: activemq
+      MESSAGEBUS_TYPE: stomp
+      MESSAGEBUS_PORT: "61613"
+      
+    build:
+      <<: *base-build
+      args:
+        <<: *base-args
+        CMD: victoriapump
+    ports:
+      - "2112:2112"
 
+  victoriametrics:
+    ############################################################################
+    # VICTORIA METRICS - time-series database
+    #
+    # Add this to your docker-compose CLI args:
+    #   --profile victoria-db
+    #
+    # This runs the VictoriaMetrics single-node instance on port 8428.
+    #
+    ############################################################################
+    image: victoriametrics/victoria-metrics:v1.121.0
+    container_name: victoriametrics
+    restart: always
+    profiles:
+      - victoria-db
+      - setup-victoria-db
+    volumes:
+      - victoria-metrics-data:/victoria-metrics-data
+    command:
+      - '--selfScrapeInterval=5s'
+      - '-storageDataPath=/victoria-metrics-data'
+    ports:
+      - "8428:8428"
+    environment:
+      <<: *victoria-env
+    networks:
+      - host-bridge-net
 
   influx:
     ############################################################################
@@ -469,7 +537,7 @@ services:
         <<: *base-args
         CMD: prometheuspump
     ports:
-      - "2112:2112"    
+      - "2112:2112"
 
   prometheus-pump-withtestserver:
     container_name: prometheus-ingester
@@ -552,6 +620,7 @@ services:
       <<: *messagebus-env
       KAFKA_BROKER: ${KAFKA_BROKER}
       KAFKA_TOPIC: ${KAFKA_TOPIC}
+      KAFKA_PARTITION: ${KAFKA_PARTITION}
       KAFKA_CACERT: ${KAFKA_CACERT}
       KAFKA_CLIENT_CERT: ${KAFKA_CLIENT_CERT}
       KAFKA_CLIENT_KEY: ${KAFKA_CLIENT_KEY}
@@ -565,6 +634,44 @@ services:
       - type: bind
         source: ${PWD}/.certs
         target: /extrabin/certs
+        read_only: true
+
+  otel-pump-standalone:
+    ############################################################################
+    # OTEL PUMP - data pump to pump telemetry into otel format
+    #    Manually start this profile if you want to point to an external server
+    #
+    # Add this to your docker-compose cli args:
+    #   --profile otel-pump
+    #
+    # If you want to connect to an external otel database,
+    # set the following environment variables:
+    #
+    # TODO: add
+    #
+    ############################################################################
+    <<: *refdaemon
+    image: idrac-telemetry-reference-tools/otelpump:latest
+    profiles:
+      - otel-pump
+    depends_on:
+      - activemq
+    environment:
+      <<: *messagebus-env
+      OTEL_COLLECTOR: ${OTEL_COLLECTOR}
+      OTEL_CACERT: ${OTEL_CACERT}
+      OTEL_CLIENT_CERT: ${OTEL_CLIENT_CERT}
+      OTEL_CLIENT_KEY: ${OTEL_CLIENT_KEY}
+      OTEL_SKIP_VERIFY: ${OTEL_SKIP_VERIFY}
+    build:
+      <<: *base-build
+      args:
+        <<: *base-args
+        CMD: otelpump
+    volumes:
+      - type: bind
+        source: ${PWD}/cmd/otelpump/redfishToOtel.yaml
+        target: /extrabin/redfishToOtel.yaml
         read_only: true
 
   elk-pump-standalone: &elk-pump
@@ -606,7 +713,7 @@ services:
     depends_on:
       - es01
       - activemq
-    
+
 
   es01:
     ############################################################################
