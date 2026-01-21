@@ -16,7 +16,8 @@ import (
 	"github.com/jackc/pgx/v4/pgxpool"
 
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/databus"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/stomp"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus/stomp"
 )
 
 var configStrings = map[string]string{
@@ -156,24 +157,27 @@ func main() {
 	//Gather configuration from environment variables
 	getEnvSettings()
 
-	dbClient := new(databus.DataBusClient)
+	//Initialize messagebus first
+	var mb messagebus.Messagebus
 	for {
 		stompPort, _ := strconv.Atoi(configStrings["mbport"])
-		mb, err := stomp.NewStompMessageBus(configStrings["mbhost"], stompPort)
+		var err error
+		mb, err = stomp.NewStompMessageBus(configStrings["mbhost"], stompPort)
 		if err != nil {
 			log.Printf("Could not connect to message bus: %s", err)
 			time.Sleep(5 * time.Second)
 		} else {
-			dbClient.Bus = mb
 			defer mb.Close()
 			break
 		}
 	}
 
+	dbClient := databus.NewDataBusClient(mb)
+
 	groupsIn := make(chan *databus.DataGroup, 10)
 	dbClient.Subscribe("/tscalestack")
 	dbClient.Get("/tscalestack")
-	go dbClient.GetGroup(groupsIn, "/tscalestack")
+	go dbClient.GetGroup(context.Background(), groupsIn, "/tscalestack")
 
 	//Initialize timescale client
 	ctx := context.Background()

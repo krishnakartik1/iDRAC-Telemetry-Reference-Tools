@@ -16,7 +16,7 @@ import (
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/auth"
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/config"
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/databus"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/stomp"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus/stomp"
 	"github.com/gin-gonic/gin"
 )
 

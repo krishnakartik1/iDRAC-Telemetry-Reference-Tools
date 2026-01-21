@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,10 +17,8 @@ import (
 
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/config"
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/databus"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus"
-
-	//"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/amqp"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/stomp"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus/stomp"
 )
 
 type SplunkEventFields struct {
@@ -254,8 +253,7 @@ func main() {
 		time.Sleep(time.Minute)
 	}
 
-	dbClient := new(databus.DataBusClient)
-	dbClient.Bus = mb
+	dbClient := databus.NewDataBusClient(mb)
 
 	// Queue to get config data set by configui.go - /splunkpump/config
 	configService := config.NewConfigService(mb, "/splunkpump/config", configItems)
@@ -267,7 +265,7 @@ func main() {
 
 	log.Printf("Entering processing loop")
 
-	go dbClient.GetGroup(groupsIn, "/spunk")
+	go dbClient.GetGroup(context.Background(), groupsIn, "/spunk")
 	go configService.Run()
 
 	var splunkKeyFinal, splunkindexFinal, splunkUrlFinal string

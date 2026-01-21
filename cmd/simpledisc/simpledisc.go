@@ -4,15 +4,16 @@ package main
 
 import (
 	"flag"
-	"gopkg.in/ini.v1"
 	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"gopkg.in/ini.v1"
+
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/disc"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/stomp"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus/stomp"
 )
 
 var configStrings = map[string]string{
@@ -39,7 +40,7 @@ func main() {
 
 	flag.Parse()
 
-	config, err := ini.Load("/extrabin/"+*configName)
+	config, err := ini.Load("/extrabin/" + *configName)
 	if err != nil {
 		log.Fatalf("Fail to read file: %v", err)
 	}

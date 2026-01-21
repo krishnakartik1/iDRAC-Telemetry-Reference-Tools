@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/auth"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/sse"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/sse"
 )
 
 const (

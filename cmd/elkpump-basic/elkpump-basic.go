@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -19,7 +20,8 @@ import (
 	"github.com/elastic/go-elasticsearch/v8/esapi"
 
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/databus"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/stomp"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus/stomp"
 )
 
 var configStrings = map[string]string{
@@ -195,25 +197,28 @@ func main() {
 	//Gather configuration from environment variables
 	getEnvSettings()
 
-	dbClient := new(databus.DataBusClient)
+	//Initialize messagebus first
+	var mb messagebus.Messagebus
 	for {
 		stompPort, _ := strconv.Atoi(configStrings["mbport"])
-		mb, err := stomp.NewStompMessageBus(configStrings["mbhost"], stompPort)
+		var err error
+		mb, err = stomp.NewStompMessageBus(configStrings["mbhost"], stompPort)
 		if err != nil {
 			log.Printf("Could not connect to message bus: %s", err)
 			time.Sleep(5 * time.Second)
 		} else {
-			log.Printf("Connected to message bus" )
-			dbClient.Bus = mb
+			log.Printf("Connected to message bus")
 			defer mb.Close()
 			break
 		}
 	}
 
+	dbClient := databus.NewDataBusClient(mb)
+
 	groupsIn := make(chan *databus.DataGroup, 10)
 	dbClient.Subscribe("/elkstack")
 	dbClient.Get("/elkstack")
-	go dbClient.GetGroup(groupsIn, "/elkstack")
+	go dbClient.GetGroup(context.Background(), groupsIn, "/elkstack")
 
 	//Initialize elasticsearch client
 	time.Sleep(15 * time.Second)
@@ -238,23 +243,23 @@ func main() {
 	}
 
 	indexName := "poweredge_telemetry_metrics"
-	isSuccess := false 
+	isSuccess := false
 	// wait for elastic search server to come up
-	for i:= 0; i< 10; i++{
-	    res, err = es.Indices.Get([]string{indexName})
-	    if err == nil{
-	        res.Body.Close()
-		isSuccess = true
-	    	break
-	    }
-	    time.Sleep(30 * time.Second)
+	for i := 0; i < 10; i++ {
+		res, err = es.Indices.Get([]string{indexName})
+		if err == nil {
+			res.Body.Close()
+			isSuccess = true
+			break
+		}
+		time.Sleep(30 * time.Second)
 	}
-	
-	if !isSuccess{
+
+	if !isSuccess {
 		log.Fatalf("ELK SErver is not up after 300 seconds")
 	}
 	log.Printf("ELK Server is up")
-	log.Printf("GET successful %s: %v", indexName,res)
+	log.Printf("GET successful %s: %v", indexName, res)
 
 	// Re-create the index
 	res, err = es.Indices.Delete([]string{indexName})

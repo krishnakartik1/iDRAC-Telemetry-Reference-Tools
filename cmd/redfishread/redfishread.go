@@ -16,9 +16,11 @@ import (
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/auth"
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/databus"
 
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/stomp"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/redfish"
-	prr "github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/redfishread"
+	prr "github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/redfishread"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus/stomp"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/redfish"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/wire"
 )
 
 var configStrings = map[string]string{
@@ -557,25 +559,27 @@ func main() {
 	getEnvSettings()
 
 	// dataGroups = make(map[string]map[string]*databus.DataGroup)
-	authClient := new(auth.AuthorizationClient)
-	dataBusService := new(databus.DataBusService)
 
+	//Initialize messagebus first
+	var mb messagebus.Messagebus
 	for {
 		stompPort, _ := strconv.Atoi(configStrings["mbport"])
-		mb, err := stomp.NewStompMessageBus(configStrings["mbhost"], stompPort)
+		var err error
+		mb, err = stomp.NewStompMessageBus(configStrings["mbhost"], stompPort)
 		if err != nil {
 			log.Printf("Could not connect to message bus: %s", err)
 			time.Sleep(5 * time.Second)
 		} else {
-			authClient.Bus = mb
-			dataBusService.Bus = mb
 			defer mb.Close()
 			break
 		}
 	}
 
+	authClient := auth.NewAuthorizationClient(mb)
+	dataBusService := databus.NewDataBusService(mb)
+
 	serviceIn := make(chan *auth.Service, 10)
-	commands := make(chan *databus.Command)
+	commands := make(chan databus.Envelope, 10)
 
 	// devices is used to answer GETPRODUCERS requests (UI Systems list).
 	// It must be initialized once so additions in handleAuthServiceChannel are visible here.
@@ -584,45 +588,67 @@ func main() {
 	log.Print("Redfish Telemetry Read Service is initialized")
 
 	authClient.ResendAll()
-	go authClient.GetService(serviceIn)
+	go authClient.GetService(context.Background(), serviceIn)
 	go handleAuthServiceChannel(serviceIn, dataBusService, devices, authClient) // THIS FUNCTION ADDS SERVICE
-	go dataBusService.ReceiveCommand(commands)                                  //nolint: errcheck
+	go func() {
+		err := dataBusService.ReceiveCommand(commands)
+		if err != nil {
+			log.Printf("Error receiving commands: %v", err)
+		}
+	}()
 	for {
-		command := <-commands
-		log.Printf("Received command in redfishread: %s", command.Command)
-		switch command.Command {
-		case databus.GET:
+		envelope := <-commands
+		log.Printf("Received command in redfishread: %s", envelope.Type)
 
-			dataGroups := prr.DataGroupsMap.GetDataGroups()
-			for _, system := range dataGroups {
-				for _, group := range system {
-					dataBusService.SendGroupToQueue(*group, command.ReceiveQueue)
+		switch envelope.Type {
+		case databus.GET:
+			// Extract queue from payload
+			var getReq struct {
+				ReceiveQueue string `json:"ReceiveQueue"`
+			}
+			if err := wire.DecodePayload(envelope.Payload, &getReq); err != nil {
+				log.Printf("Error decoding GET request: %v", err)
+				continue
+			}
+
+			for _, group := range prr.DataGroupsMap {
+				if group != nil {
+					err := dataBusService.SendGroupToQueue(*group, envelope.ReplyTo, envelope.CorrelationID)
+					if err != nil {
+						log.Printf("Error sending group: %v", err)
+					}
 				}
 			}
 
 		case databus.GETPRODUCERS:
-			producers := make([]*databus.DataProducer, len(devices))
-			i := 0
-			for _, dev := range devices {
-				producer := new(databus.DataProducer)
-				producer.Hostname = dev.Redfish.GetHostname()
-				producer.Username = dev.Redfish.GetUsername()
-				producer.State = dev.State
-				producer.LastEvent = dev.LastEvent
-				producers[i] = producer
-				i = i + 1
+			producers := make([]*databus.DataProducer, 0, len(devices))
+			for _, device := range devices {
+				producers = append(producers, &databus.DataProducer{
+					Hostname:  device.HostName,
+					Username:  "",
+					State:     device.State,
+					LastEvent: device.LastEvent,
+				})
 			}
-			err := dataBusService.SendProducersToQueue(producers, command.ReceiveQueue)
+			err := dataBusService.SendProducersToQueue(producers, envelope.ReplyTo, envelope.CorrelationID)
 			if err != nil {
-				log.Printf("aft SendProducersToQueue got error,so continue")
+				log.Printf("Error sending producers: %v", err)
 			}
+
 		case databus.DELETEPRODUCER:
-			devices[command.ServiceIP].CtxCancel()
-			log.Printf("service has been cancelled, Ctx = %v", devices[command.ServiceIP].Ctx)
-			time.Sleep(2 * time.Second)
-			delete(devices, command.ServiceIP)
-		case auth.TERMINATE:
-			os.Exit(0)
+			var delReq struct {
+				ServiceIP string `json:"serviceIP"`
+			}
+			if err := wire.DecodePayload(envelope.Payload, &delReq); err != nil {
+				log.Printf("Error decoding DELETEPRODUCER request: %v", err)
+				continue
+			}
+			log.Printf("Deleting producer %s", delReq.ServiceIP)
+			devices.CtxCancel(delReq.ServiceIP)
+			delete(devices, delReq.ServiceIP)
+
+		default:
+			log.Printf("Unknown command: %s", envelope.Type)
 		}
 	}
 }

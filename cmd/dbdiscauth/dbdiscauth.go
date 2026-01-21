@@ -15,8 +15,10 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/auth"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/stomp"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/dbdiscauth"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/dbdiscauth"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus/stomp"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/wire"
 )
 
 var configStrings = map[string]string{
@@ -209,22 +211,23 @@ func main() {
 	//Gather configuration from environment variables
 	getEnvSettings()
 
-	//Setu authorization service
-	authorizationService := new(auth.AuthorizationService)
-
-	//Initialize messagebus
+	//Initialize messagebus first
+	var mb messagebus.Messagebus
 	for {
 		stompPort, _ := strconv.Atoi(configStrings["mbport"])
-		mb, err := stomp.NewStompMessageBus(configStrings["mbhost"], stompPort)
+		var err error
+		mb, err = stomp.NewStompMessageBus(configStrings["mbhost"], stompPort)
 		if err != nil {
 			log.Printf("Could not connect to message bus: %s", err)
 			time.Sleep(5 * time.Second)
 		} else {
-			authorizationService.Bus = mb
 			defer mb.Close()
 			break
 		}
 	}
+
+	//Setup authorization service
+	authorizationService := auth.NewAuthorizationService(mb)
 
 	//Initialize mysql db instance which stores service authorizations
 	db, err := initMySQLDatabase()
@@ -245,12 +248,12 @@ func main() {
 	}
 
 	//Process ADDSERVICE and RESEND requests for authorization services
-	commands := make(chan *auth.Command)
+	commands := make(chan auth.Envelope)
 	go authorizationService.ReceiveCommand(commands) //nolint: errcheck
 	for {
-		command := <-commands
-		log.Printf("Received command in dbdiscauth: %s", command.Command)
-		switch command.Command {
+		env := <-commands
+		log.Printf("Received command in dbdiscauth: %s", env.Type)
+		switch env.Type {
 		case auth.RESEND:
 			authServices, err := dbdiscauth.GetInstancesFromDB(db)
 			if err != nil {
@@ -261,17 +264,32 @@ func main() {
 				go authorizationService.SendService(element) //nolint: errcheck
 			}
 		case auth.ADDSERVICE:
-			err = dbdiscauth.AddServiceToDB(db, command.Service, authorizationService)
+			var service auth.Service
+			if err := wire.DecodePayload(env.Payload, &service); err != nil {
+				log.Printf("Failed to decode add service payload: %v", err)
+				break
+			}
+			err = dbdiscauth.AddServiceToDB(db, service, authorizationService)
 			if err != nil {
 				log.Print("Addservice,Failed to write db entries: ", err)
 			}
 		case auth.DELETESERVICE:
-			err = dbdiscauth.DeleteServiceFromDB(db, command.Service, authorizationService)
+			var service auth.Service
+			if err := wire.DecodePayload(env.Payload, &service); err != nil {
+				log.Printf("Failed to decode delete service payload: %v", err)
+				break
+			}
+			err = dbdiscauth.DeleteServiceFromDB(db, service, authorizationService)
 			if err != nil {
 				log.Print("Deleteservice Failed to delete db entries: ", err)
 			}
 		case auth.SPLUNKADDHEC:
-			err = splunkAddHECToDB(db, command.SplunkConfig, authorizationService)
+			var config auth.SplunkConfig
+			if err := wire.DecodePayload(env.Payload, &config); err != nil {
+				log.Printf("Failed to decode splunk config payload: %v", err)
+				break
+			}
+			err = splunkAddHECToDB(db, config, authorizationService)
 			if err != nil {
 				log.Print("AddHec Failed to write db entries: ", err)
 			}
@@ -279,9 +297,19 @@ func main() {
 			HecConfig, err := getHECInstancesFromDB(db)
 			if err != nil {
 				log.Print("Failed to get db entries: ", err)
+				if env.ReplyTo != "" {
+					if replyErr := authorizationService.ReplyError(env, err); replyErr != nil {
+						log.Printf("Failed to reply with error: %v", replyErr)
+					}
+				}
 				break
 			}
 			log.Print(HecConfig)
+			if env.ReplyTo != "" {
+				if replyErr := authorizationService.Reply(env, HecConfig); replyErr != nil {
+					log.Printf("Failed to reply with HEC config: %v", replyErr)
+				}
+			}
 		case auth.TERMINATE:
 			os.Exit(0)
 		}

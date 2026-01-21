@@ -16,8 +16,8 @@ import (
 
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/auth"
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/disc"
-
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/stomp"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus/stomp"
 )
 
 var configStrings = map[string]string{
@@ -128,7 +128,7 @@ func main() {
 
 	flag.Parse()
 
-	config, err := ini.Load("/extrabin/"+*configName)
+	config, err := ini.Load("/extrabin/" + *configName)
 	if err != nil {
 		log.Fatalf("Fail to read file: %v", err)
 	}
@@ -136,24 +136,25 @@ func main() {
 	//Gather configuration from environment variables
 	getEnvSettings()
 
-	discoveryClient := new(disc.DiscoveryClient)
-	authorizationService := new(auth.AuthorizationService)
-
+	//Initialize messagebus first
+	var mb messagebus.Messagebus
 	for {
 		stompPort, _ := strconv.Atoi(configStrings["mbport"])
-		mb, err := stomp.NewStompMessageBus(configStrings["mbhost"], stompPort)
+		var err error
+		mb, err = stomp.NewStompMessageBus(configStrings["mbhost"], stompPort)
 		if err != nil {
 			log.Printf("Could not connect to message bus: %s", err)
 			time.Sleep(5 * time.Second)
 		} else {
-			discoveryClient.Bus = mb
-			authorizationService.Bus = mb
 			defer mb.Close()
 			break
 		}
 	}
+
+	discoveryClient := disc.NewDiscoveryClient(mb)
+	authorizationService := auth.NewAuthorizationService(mb)
 	serviceIn := make(chan *disc.Service, 10)
-	commands := make(chan *auth.Command)
+	commands := make(chan auth.Envelope)
 
 	log.Print("Auth Service is initialized")
 
@@ -162,9 +163,9 @@ func main() {
 	go handleDiscServiceChannel(serviceIn, config, authorizationService)
 	go authorizationService.ReceiveCommand(commands) //nolint: errcheck
 	for {
-		command := <-commands
-		log.Printf("in simpleauth, Received command: %s", command.Command)
-		switch command.Command {
+		env := <-commands
+		log.Printf("in simpleauth, Received command: %s", env.Type)
+		switch env.Type {
 		case auth.RESEND:
 			for _, element := range authServices {
 				go authorizationService.SendService(element) //nolint: errcheck

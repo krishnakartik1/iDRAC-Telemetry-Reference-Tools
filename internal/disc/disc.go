@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"log"
 
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus"
 )
 
 const (
@@ -42,6 +42,16 @@ type DiscoveryService struct {
 }
 type DiscoveryClient struct {
 	Bus messagebus.Messagebus
+}
+
+// NewDiscoveryService creates a new DiscoveryService with the provided message bus
+func NewDiscoveryService(bus messagebus.Messagebus) *DiscoveryService {
+	return &DiscoveryService{Bus: bus}
+}
+
+// NewDiscoveryClient creates a new DiscoveryClient with the provided message bus
+func NewDiscoveryClient(bus messagebus.Messagebus) *DiscoveryClient {
+	return &DiscoveryClient{Bus: bus}
 }
 
 func (d *DiscoveryService) SendService(service Service) error {

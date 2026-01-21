@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus"
 	kafka "github.com/segmentio/kafka-go"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus"
 )
 
 const KafkaMaxMessageBytes = 16 * 1024

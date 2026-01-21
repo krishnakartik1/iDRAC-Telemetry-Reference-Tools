@@ -15,7 +15,8 @@ import (
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/auth"
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/config"
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/databus"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/stomp"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus/stomp"
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,7 +33,11 @@ type SystemHandler struct {
 }
 
 func getSystemList(c *gin.Context, s *SystemHandler) {
-	producers := s.DataBus.GetProducers("/configui/databus_in")
+	producers, err := s.DataBus.GetProducers("/configui/databus_in")
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(200, producers)
 }
 
@@ -80,39 +85,43 @@ func getKafkaBrokerConfig(c *gin.Context, s *SystemHandler) {
 	configValues, err := s.ConfigBus.Get("kafkaBroker")
 	if err != nil {
 		log.Printf("Failed to get kafkaBroker values %v", err)
-	} else {
-		KafkaConfig.Broker = configValues.Value.(string)
+	} else if str, ok := configValues.(string); ok {
+		KafkaConfig.Broker = str
 	}
 
 	configValues, err = s.ConfigBus.Get("kafkaTopic")
 	if err != nil {
 		log.Printf("Failed to get kafkaTopic values %v", err)
-	} else {
-		KafkaConfig.Topic = configValues.Value.(string)
+	} else if str, ok := configValues.(string); ok {
+		KafkaConfig.Topic = str
 	}
 
 	configValues, err = s.ConfigBus.Get("kafkaCACert")
 	if err != nil {
-		log.Printf("Failed to get kafkaTopic values %v", err)
-	} else {
-		val := configValues.Value.(string)
-		if val != "" {
-			KafkaConfig.TLS = "true"
-		}
+		log.Printf("Failed to get kafkaCACert values %v", err)
+	} else if val, ok := configValues.(string); ok && val != "" {
+		KafkaConfig.TLS = "true"
 	}
 
 	configValues, err = s.ConfigBus.Get("kafkaSkipVerify")
 	if err != nil {
-		log.Printf("Failed to get kafkaClientCert values %v", err)
-	} else {
-		KafkaConfig.KafkaSkipVerify = configValues.Value.(string)
+		log.Printf("Failed to get kafkaSkipVerify values %v", err)
+	} else if str, ok := configValues.(string); ok {
+		KafkaConfig.KafkaSkipVerify = str
 	}
 
 	configValues, err = s.ConfigBus.Get("kafkaClientCert")
 	if err != nil {
 		log.Printf("Failed to get kafkaClientCert values %v", err)
-	} else {
-		val := configValues.Value.(string)
+	} else if str, ok := configValues.(string); ok {
+		KafkaConfig.KafkaClientCert = str
+	}
+
+	configValues, err = s.ConfigBus.Get("kafkaClientKey")
+	if err != nil {
+		log.Printf("Failed to get kafkaClientKey values %v", err)
+	} else if val, ok := configValues.(string); ok {
+		KafkaConfig.KafkaClientKey = val
 		if val != "" {
 			KafkaConfig.ClientAuth = "true"
 		}
@@ -129,18 +138,23 @@ func getSplunkHttpConfig(c *gin.Context, s *SystemHandler) {
 	if err != nil {
 		log.Printf("Failed to get any config url values %v", err)
 	}
-	SplunkConfig.Url = configValues.Value.(string)
+	if str, ok := configValues.(string); ok {
+		SplunkConfig.Url = str
+	}
 	configValues, err = s.ConfigBus.Get("splunkKey")
 	if err != nil {
 		log.Printf("Failed to get any config key values %v", err)
 	}
-	SplunkConfig.Key = configValues.Value.(string)
+	if str, ok := configValues.(string); ok {
+		SplunkConfig.Key = str
+	}
 	configValues, err = s.ConfigBus.Get("splunkIndex")
-
 	if err != nil {
 		log.Printf("Failed to get any Index values %v", err)
 	}
-	SplunkConfig.Index = configValues.Value.(string)
+	if str, ok := configValues.(string); ok {
+		SplunkConfig.Index = str
+	}
 	c.JSON(200, SplunkConfig)
 }
 
@@ -155,21 +169,21 @@ func kafkaConfig(c *gin.Context, s *SystemHandler) {
 	s.ConfigBus.ResponseQueue = "/kconfigui"
 
 	if tmp.Broker != "" {
-		_, err = s.ConfigBus.Set("kafkaBroker", tmp.Broker)
+		err = s.ConfigBus.Set("kafkaBroker", tmp.Broker)
 		if err != nil {
 			log.Println("Failed to update kafkaBroker config: ", err)
 		}
 	}
 
 	if tmp.Topic != "" {
-		_, err = s.ConfigBus.Set("kafkaTopic", tmp.Topic)
+		err = s.ConfigBus.Set("kafkaTopic", tmp.Topic)
 		if err != nil {
 			log.Println("Failed to update kafkaTopic config: ", err)
 		}
 	}
 
 	if tmp.KafkaSkipVerify != "" {
-		_, err = s.ConfigBus.Set("kafkaSkipVerify", tmp.KafkaSkipVerify)
+		err = s.ConfigBus.Set("kafkaSkipVerify", tmp.KafkaSkipVerify)
 		if err != nil {
 			log.Println("Failed to update kafkaTopic config: ", err)
 		}
@@ -182,7 +196,7 @@ func kafkaConfig(c *gin.Context, s *SystemHandler) {
 		}
 
 		//log.Println(tmp.KafkaCACert.Filename)
-		_, err = s.ConfigBus.Set("kafkaCACert", "kafkaCACert")
+		err = s.ConfigBus.Set("kafkaCACert", "kafkaCACert")
 		if err != nil {
 			log.Println("Failed to update kafkaCACert config: ", err)
 		}
@@ -194,7 +208,7 @@ func kafkaConfig(c *gin.Context, s *SystemHandler) {
 			log.Println("Failed to save client cert: ", err)
 		}
 
-		_, err = s.ConfigBus.Set("kafkaClientCert", "kafkaClientCert")
+		err = s.ConfigBus.Set("kafkaClientCert", "kafkaClientCert")
 		if err != nil {
 			log.Println("Failed to update kafkaClientCert config: ", err)
 		}
@@ -205,7 +219,7 @@ func kafkaConfig(c *gin.Context, s *SystemHandler) {
 		if err != nil {
 			log.Println("Failed to save client key: ", err)
 		}
-		_, err = s.ConfigBus.Set("kafkaClientKey", "kafkaClientKey")
+		err = s.ConfigBus.Set("kafkaClientKey", "kafkaClientKey")
 		if err != nil {
 			log.Println("Failed to update kafkaClientCert config: ", err)
 		}
@@ -224,14 +238,14 @@ func otelConfig(c *gin.Context, s *SystemHandler) {
 	s.ConfigBus.ResponseQueue = "/oconfigui"
 
 	if tmp.OtelCollector != "" {
-		_, err = s.ConfigBus.Set("otelCollector", tmp.OtelCollector)
+		err = s.ConfigBus.Set("otelCollector", tmp.OtelCollector)
 		if err != nil {
 			log.Println("Failed to update otelCollector config: ", err)
 		}
 	}
 
 	if tmp.OtelSkipVerify != "" {
-		_, err = s.ConfigBus.Set("otelSkipVerify", tmp.OtelSkipVerify)
+		err = s.ConfigBus.Set("otelSkipVerify", tmp.OtelSkipVerify)
 		if err != nil {
 			log.Println("Failed to update otelTopic config: ", err)
 		}
@@ -244,7 +258,7 @@ func otelConfig(c *gin.Context, s *SystemHandler) {
 		}
 
 		//log.Println(tmp.OtelCACert.Filename)
-		_, err = s.ConfigBus.Set("otelCACert", "otelCACert")
+		err = s.ConfigBus.Set("otelCACert", "otelCACert")
 		if err != nil {
 			log.Println("Failed to update otelCACert config: ", err)
 		}
@@ -256,7 +270,7 @@ func otelConfig(c *gin.Context, s *SystemHandler) {
 			log.Println("Failed to save client cert: ", err)
 		}
 
-		_, err = s.ConfigBus.Set("otelClientCert", "otelClientCert")
+		err = s.ConfigBus.Set("otelClientCert", "otelClientCert")
 		if err != nil {
 			log.Println("Failed to update otelClientCert config: ", err)
 		}
@@ -267,7 +281,7 @@ func otelConfig(c *gin.Context, s *SystemHandler) {
 		if err != nil {
 			log.Println("Failed to save client key: ", err)
 		}
-		_, err = s.ConfigBus.Set("otelClientKey", "otelClientKey")
+		err = s.ConfigBus.Set("otelClientKey", "otelClientKey")
 		if err != nil {
 			log.Println("Failed to update otelClientCert config: ", err)
 		}
@@ -294,15 +308,15 @@ func configHEC(c *gin.Context, s *SystemHandler) {
 		var hecconfig auth.SplunkConfig
 		s.ConfigBus.CommandQueue = "/splunkpump/config"
 		s.ConfigBus.ResponseQueue = "/configui"
-		_, err = s.ConfigBus.Set("splunkURL", tmp.Url)
+		err = s.ConfigBus.Set("splunkURL", tmp.Url)
 		if err != nil {
 			log.Printf("Failed to send config (splunkURL) %v", err)
 		}
-		_, err = s.ConfigBus.Set("splunkKey", tmp.Key)
+		err = s.ConfigBus.Set("splunkKey", tmp.Key)
 		if err != nil {
 			log.Printf("Failed to send config (splunkKey) %v", err)
 		}
-		_, err = s.ConfigBus.Set("splunkIndex", tmp.Index)
+		err = s.ConfigBus.Set("splunkIndex", tmp.Index)
 		if err != nil {
 			log.Printf("Failed to send config (splunkIndex) %v", err)
 		}
@@ -357,7 +371,7 @@ func deleteSystem(c *gin.Context, s *SystemHandler) {
 				log.Println("Failed to delete service parse json: ", serviceerr)
 				_ = c.AbortWithError(500, err)
 			}
-			s.DataBus.DeleteProducer("/configui/databus_in", service)
+			s.DataBus.DeleteProducer("/configui/databus_in", service.Ip)
 
 		}
 		c.JSON(200, gin.H{"success": "true"})
@@ -425,26 +439,25 @@ func main() {
 	//Gather configuration from environment variables
 	getEnvSettings()
 
-	systemHandler := new(SystemHandler)
-	systemHandler.AuthClient = new(auth.AuthorizationClient)
-	systemHandler.DataBus = new(databus.DataBusClient)
-	systemHandler.ConfigBus = new(config.ConfigClient)
-
-	//Initialize messagebus
+	//Initialize messagebus first
+	var mb messagebus.Messagebus
 	for {
 		stompPort, _ := strconv.Atoi(configStrings["mbport"])
-		mb, err := stomp.NewStompMessageBus(configStrings["mbhost"], stompPort)
+		var err error
+		mb, err = stomp.NewStompMessageBus(configStrings["mbhost"], stompPort)
 		if err != nil {
 			log.Printf("Could not connect to message bus: %s", err)
 			time.Sleep(5 * time.Second)
 		} else {
-			systemHandler.AuthClient.Bus = mb
-			systemHandler.DataBus.Bus = mb
-			systemHandler.ConfigBus.Bus = mb
 			defer mb.Close()
 			break
 		}
 	}
+
+	systemHandler := new(SystemHandler)
+	systemHandler.AuthClient = auth.NewAuthorizationClient(mb)
+	systemHandler.DataBus = databus.NewDataBusClient(mb)
+	systemHandler.ConfigBus = config.NewConfigClientWithBus(mb)
 
 	// DEBUGGING
 	// Uncomment this when you would like to debug configui in a standalone debugger. The issue is that the working

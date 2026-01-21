@@ -10,7 +10,7 @@ import (
 	"github.com/go-stomp/stomp"
 	"github.com/go-stomp/stomp/frame"
 
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus"
 )
 
 type StompMessagebus struct {
@@ -102,4 +102,21 @@ func (m *StompMessagebus) Close() error {
 
 func (m *StompSubscription) Close() error {
 	return m.sub.Unsubscribe()
+}
+
+// InitializeMB creates a new STOMP message bus connection with retry logic.
+// It will keep retrying every 5 seconds until a connection is established.
+func InitializeMB(host string, port int) messagebus.Messagebus {
+	var mb messagebus.Messagebus
+	var err error
+	for {
+		mb, err = NewStompMessageBus(host, port)
+		if err != nil {
+			log.Printf("Could not connect to message bus at %s:%d: %v", host, port, err)
+			time.Sleep(5 * time.Second)
+		} else {
+			break
+		}
+	}
+	return mb
 }

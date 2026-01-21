@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,11 +13,9 @@ import (
 
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/config"
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/databus"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus"
-
-	//"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/amqp"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/kafka"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/stomp"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus/kafka"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus/stomp"
 )
 
 type kafkaEventFields struct {
@@ -262,14 +261,13 @@ func main() {
 		time.Sleep(time.Minute)
 	}
 
-	dbClient := new(databus.DataBusClient)
-	dbClient.Bus = mb
+	dbClient := databus.NewDataBusClient(mb)
 	configService := config.NewConfigService(mb, "/kafkapump/config", configItems)
 
 	dbClient.Subscribe("/kafka")
 	dbClient.Get("/kafka")
 	groupsIn := make(chan *databus.DataGroup, 10)
-	go dbClient.GetGroup(groupsIn, "/kafka")
+	go dbClient.GetGroup(context.Background(), groupsIn, "/kafka")
 	go configService.Run()
 
 	// external message bus - kafka

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/databus"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/redfish"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/redfish"
 )
 
 type SystemDetail struct {
@@ -208,7 +208,7 @@ func parseRedfishEvents(events *redfish.RedfishPayload, r *RedfishDevice, dataBu
 		}
 	}
 	dataBusService.SendGroup(*group)
-	DataGroupsMap.AddDataGroup(r.SystemID, group)
+	DataGroupsMap[r.SystemID] = group
 }
 
 func getValueIdContextAndLabel(value *redfish.RedfishPayload, i int) (string, string, string) {
@@ -284,5 +284,5 @@ func parseReport(metricReport *redfish.RedfishPayload, r *RedfishDevice, dataBus
 		}
 	}
 	dataBusService.SendGroup(*group)
-	DataGroupsMap.AddDataGroup(r.SystemID, group)
+	DataGroupsMap[r.SystemID] = group
 }

@@ -12,3 +12,9 @@ type Messagebus interface {
 	ReceiveMessage(message chan<- string, queue string) (Subscription, error)
 	Close() error
 }
+
+// MessagebusFactory is a function type for creating Messagebus instances
+type MessagebusFactory func(host string, port int) (Messagebus, error)
+
+// DefaultFactory holds the default messagebus factory (set by stomp package init or manually)
+var DefaultFactory MessagebusFactory

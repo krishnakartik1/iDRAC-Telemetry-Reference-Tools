@@ -14,8 +14,8 @@ import (
 
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/config"
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/databus"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus/stomp"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/messagebus/stomp"
 	"github.com/spf13/viper"
 
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
@@ -698,14 +698,13 @@ func main() {
 		time.Sleep(time.Minute)
 	}
 
-	dbClient := new(databus.DataBusClient)
-	dbClient.Bus = mb
+	dbClient := databus.NewDataBusClient(mb)
 	configService := config.NewConfigService(mb, "/otelpump/config", configItems)
 
 	dbClient.Subscribe("/otel")
 	dbClient.Get("/otel")
 	groupsIn := make(chan *databus.DataGroup, 10)
-	go dbClient.GetGroup(groupsIn, "/otel")
+	go dbClient.GetGroup(context.Background(), groupsIn, "/otel")
 	go configService.Run()
 
 	var ocUrl, kcert, kccert, kckey string

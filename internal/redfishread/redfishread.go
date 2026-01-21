@@ -10,8 +10,8 @@ import (
 
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/auth"
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/databus"
-	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/redfish"
-	pdatabus "github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/databus"
+	pdatabus "github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/databus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/pkg/redfish"
 )
 
 type RedfishDevices map[string]*RedfishDevice
@@ -36,10 +36,10 @@ func (r RedfishDevices) AddDevice(k string, v *RedfishDevice) {
 	r[k] = v
 }
 
-var DataGroupsMap *pdatabus.DataGroups
+var DataGroupsMap map[string]*pdatabus.DataGroup
 
 func InitNewDataGroupsMap() {
-	DataGroupsMap = pdatabus.NewDataGroupsMap()
+	DataGroupsMap = make(map[string]*pdatabus.DataGroup)
 }
 
 func ValidateAndAddDevice(service *auth.Service, devices RedfishDevices) (*RedfishDevice, error) {
