@@ -3,15 +3,15 @@
 package auth
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
+	"context"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/disc"
 	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/messagebus"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/service"
+	"github.com/dell/iDRAC-Telemetry-Reference-Tools/internal/wire"
 )
 
 const (
@@ -89,6 +89,9 @@ const (
 	GETLOGIN          = "getlogin"
 
 	UPDATESERVICEX = "updateservicex"
+
+	// Message type for services
+	SERVICE = "service"
 )
 
 type SplunkConfig struct {
@@ -127,8 +130,9 @@ type Login struct {
 }
 
 const (
-	CommandQueue = "/authorization/command"
-	EventQueue   = "/authorization"
+	CommandQueue = "/queue/authorization/command"
+	EventQueue   = "/queue/authorization"
+	ReplyPrefix  = "/queue/authorization/reply."
 )
 
 type AuthClientInterface interface {
@@ -138,14 +142,11 @@ type AuthClientInterface interface {
 	DeleteServiceItem(si ServiceItem) error
 	GetHECConfig()
 	GetAllServices() []Service
-	GetService(services chan<- *Service)
+	GetService(ctx context.Context, services chan<- *Service)
 	GetServiceItems(sip string) []ServiceItem
 	GetServiceWithIP(ip string) Service
 	GetServiceItemWithIP(siip string) ServiceItem
-	ReadOneMessage(queue string, v any) error
 	ResendAll()
-	SendCommand(command Command) error
-	SendCommandString(command string)
 	SplunkAddHEC(SplunkHttp SplunkConfig) error
 	UpdateServiceX(s Service) error
 	UpdateService(s Service) error
@@ -161,268 +162,98 @@ type AuthClientInterface interface {
 }
 
 type AuthorizationService struct {
-	Bus messagebus.Messagebus
+	*service.BaseService
 }
 
-func (as *AuthorizationService) SendValveState(valvestatus []ValveState, rcvQueue string) error {
-
-	jsonStr, _ := json.Marshal(valvestatus)
-	err := as.Bus.SendMessage(jsonStr, rcvQueue)
-	if err != nil {
-		log.Printf("Failed to send valve status to queue %s: %v", rcvQueue, err)
+// NewAuthorizationService creates a new AuthorizationService with the given message bus
+func NewAuthorizationService(bus messagebus.Messagebus) *AuthorizationService {
+	return &AuthorizationService{
+		BaseService: service.NewBaseService(bus, CommandQueue),
 	}
-	return err
-
 }
 
-func (as *AuthorizationService) SendSystemTypes(systemtypes []SystemType, rcvQueue string) error {
-
-	jsonStr, _ := json.Marshal(systemtypes)
-	err := as.Bus.SendMessage(jsonStr, rcvQueue)
+// BroadcastService broadcasts a service update to EventQueue using envelope format
+func (as *AuthorizationService) BroadcastService(svc Service) error {
+	// TODO see if the type can be reused
+	env, err := wire.NewEnvelope(SERVICE, svc)
 	if err != nil {
-		log.Printf("Failed to send system types to queue %s: %v", rcvQueue, err)
-	}
-	return err
-}
-
-func (as *AuthorizationService) SendAllServices(services []Service, rcvQueue string) error {
-	// Convert the slice of services to JSON
-	jsonStr, err := json.Marshal(services)
-	if err != nil {
-		log.Printf("Failed to marshal services: %v", err)
 		return err
 	}
-
-	// Send the JSON message to the queue
-	err = as.Bus.SendMessage(jsonStr, rcvQueue)
-	if err != nil {
-		log.Printf("Failed to send services to queue %s: %v", rcvQueue, err)
-		return err
-	}
-	return nil
+	return as.SendEnvelope(EventQueue, env)
 }
 
-func (as *AuthorizationService) SendService(service Service) error {
-	return as.SendServiceWithQ(service, EventQueue)
-}
-
-func (as *AuthorizationService) SendServiceWithQ(service Service, queue string) error {
-	jsonStr, _ := json.Marshal(service)
-	err := as.Bus.SendMessage(jsonStr, queue)
-	if err != nil {
-		log.Printf("Failed to send service %v", err)
-	}
-	return err
-}
-
-func (as *AuthorizationService) SendServiceItems(sis []ServiceItem, rcvQueue string) error {
-	return as.SendServiceItemsWithQ(sis, rcvQueue)
-}
-
-func (as *AuthorizationService) SendServiceItemsWithQ(sis []ServiceItem, queue string) error {
-	jsonStr, _ := json.Marshal(sis)
-	err := as.Bus.SendMessage(jsonStr, queue)
-	if err != nil {
-		log.Printf("Failed to send service %v", err)
-	}
-	return err
-}
-
-func (as *AuthorizationService) SendLogin(login Login, queue string) error {
-	jsonStr, _ := json.Marshal(login)
-	err := as.Bus.SendMessage(jsonStr, queue)
-	if err != nil {
-		log.Printf("Failed to send login %v", err)
-	}
-	return err
-}
-
-func (as *AuthorizationService) ReceiveCommand(commands chan<- *Command) error {
-	messages := make(chan string, 10)
-
-	go func() {
-		_, err := as.Bus.ReceiveMessage(messages, CommandQueue)
-		if err != nil {
-			log.Printf("Error recieving messages %v", err)
-		}
-	}()
-	for {
-		message := <-messages
-		command := new(Command)
-		err := json.Unmarshal([]byte(message), command)
-		if err != nil {
-			log.Print("Error reading command queue: ", err)
-			log.Printf("Message %#v\n", message)
-			return err
-		}
-		commands <- command
-	}
-	return nil
-}
-
-// uniqueReplyQueue returns a unique, per-request reply destination suitable
-// for request/reply.
-//
-// The reply destination must be a normal queue/topic name that both the
-// requester and responder can use. Avoid broker-managed temporary destination
-// semantics here.
-func uniqueReplyQueue(prefix string) string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("/authorization/reply/%s-%d", prefix, time.Now().UnixNano())
-	}
-	return "/authorization/reply/" + prefix + "-" + hex.EncodeToString(b)
+// ReceiveEnvelope receives commands as envelopes from the command queue
+func (as *AuthorizationService) ReceiveEnvelope(envelopes chan<- wire.Envelope) error {
+	return as.BaseService.ReceiveCommand(envelopes)
 }
 
 type AuthorizationClient struct {
-	Bus messagebus.Messagebus
+	*service.BaseClient
 }
 
-// ReadOneMessage subscribes to the given queue and waits for a single
-// message which is unmarshalled into v.
-func (ac *AuthorizationClient) ReadOneMessage(queue string, v any) error {
-	messages := make(chan string, 1)
-	sub, err := ac.Bus.ReceiveMessage(messages, queue)
-	if err != nil {
-		log.Println("Error receiving message: ", err)
-		return err
-	}
-	defer sub.Close()
-
-	select {
-	case message := <-messages:
-		err = json.Unmarshal([]byte(message), v)
-		if err != nil {
-			log.Print("Error unmarshalling message: ", err)
-			return err
-		}
-		return nil
-	case <-time.After(ReadTimeout * time.Second):
-		return fmt.Errorf("timeout waiting for message from queue %s", queue)
+// NewAuthorizationClient creates a new AuthorizationClient with the given message bus
+func NewAuthorizationClient(bus messagebus.Messagebus, clientName string) *AuthorizationClient {
+	return &AuthorizationClient{
+		BaseClient: service.NewBaseClient(bus, CommandQueue, ReplyPrefix, clientName, ReadTimeout*time.Second),
 	}
 }
 
-// requestReply performs a request/reply interaction.
-//
-// It subscribes to cmd.ReceiveQueue, then publishes cmd, then waits for a
-// single reply message that is unmarshalled into v.
-func (ac *AuthorizationClient) requestReply(cmd Command, v any) error {
-	queue := cmd.ReceiveQueue
-	if queue == "" {
-		return fmt.Errorf("ReceiveQueue must be set")
-	}
-
-	messages := make(chan string, 1)
-	sub, err := ac.Bus.ReceiveMessage(messages, queue)
-	if err != nil {
-		log.Println("Error receiving message: ", err)
-		return err
-	}
-	defer sub.Close()
-
-	if err := ac.SendCommand(cmd); err != nil {
-		return err
-	}
-
-	select {
-	case message := <-messages:
-		err = json.Unmarshal([]byte(message), v)
-		if err != nil {
-			log.Print("Error unmarshalling message: ", err)
-			return err
-		}
-		return nil
-	case <-time.After(ReadTimeout * time.Second):
-		return fmt.Errorf("timeout waiting for message from queue %s", queue)
-	}
-}
-
+// GetHECConfig sends a fire-and-forget request to get HEC config
 func (ac *AuthorizationClient) GetHECConfig() {
-	ac.SendCommandString(GETHECCONFIG)
+	ac.Send(GETHECCONFIG, nil)
 }
 
-func (as *AuthorizationService) Sendconfig(config SplunkConfig) error {
-	jsonStr, _ := json.Marshal(config)
-	err := as.Bus.SendMessage(jsonStr, EventQueue)
-	if err != nil {
-		log.Printf("Failed to send service %v", err)
-	}
-	return err
-
-}
-
-func (ac *AuthorizationClient) SendCommand(command Command) error {
-	jsonStr, _ := json.Marshal(command)
-	err := ac.Bus.SendMessage(jsonStr, CommandQueue)
-	if err != nil {
-		log.Printf("Failed to send command %v", err)
-	}
-	return err
-}
-
-func (ac *AuthorizationClient) SendCommandString(command string) {
-	c := new(Command)
-	c.Command = command
-	ac.SendCommand(*c)
-}
-
+// ResendAll sends a fire-and-forget request to resend all services
 func (ac *AuthorizationClient) ResendAll() {
-	ac.SendCommandString(RESEND)
+	ac.Send(RESEND, nil)
 }
 
-func (ac *AuthorizationClient) SplunkAddHEC(SplunkHttp SplunkConfig) error {
-	c := new(Command)
-	c.Command = SPLUNKADDHEC
-	c.SplunkConfig = SplunkHttp
-	return ac.SendCommand(*c)
+// SplunkAddHEC sends a fire-and-forget request to add Splunk HEC config
+func (ac *AuthorizationClient) SplunkAddHEC(splunkHttp SplunkConfig) error {
+	return ac.Send(SPLUNKADDHEC, splunkHttp)
 }
 
+// AddService sends a fire-and-forget request to add a service
 func (ac *AuthorizationClient) AddService(service Service) error {
-	c := new(Command)
-	c.Command = ADDSERVICE
-	c.Service = service
-	return ac.SendCommand(*c)
+	return ac.Send(ADDSERVICE, service)
 }
 
+// DeleteService sends a fire-and-forget request to delete a service
 func (ac *AuthorizationClient) DeleteService(service Service) error {
-	c := new(Command)
-	c.Command = DELETESERVICE
-	c.Service = service
-	return ac.SendCommand(*c)
+	return ac.Send(DELETESERVICE, service)
 }
 
-func (ac *AuthorizationClient) GetService(services chan<- *Service) {
-	messages := make(chan string, 10)
+// GetService listens for Service broadcasts on EventQueue.
+// The ctx parameter allows cancellation of the listener.
+func (ac *AuthorizationClient) GetService(ctx context.Context, services chan<- *Service) {
+	envelopes := make(chan wire.Envelope, 10)
+	ac.ListenToQueueFiltered(ctx, EventQueue, SERVICE, envelopes)
 
 	go func() {
-		_, err := ac.Bus.ReceiveMessage(messages, EventQueue)
-		if err != nil {
-			log.Printf("Error recieving messages %v", err)
+		defer close(services)
+		for env := range envelopes {
+			var svc Service
+			if err := wire.DecodePayload(env.Payload, &svc); err != nil {
+				log.Printf("Error decoding service: %v", err)
+				continue
+			}
+			select {
+			case services <- &svc:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
-	for {
-		message := <-messages
-		service := new(Service)
-		err := json.Unmarshal([]byte(message), service)
-		if err != nil {
-			log.Print("Error reading auth queue: ", err)
-		}
-		services <- service
-	}
 }
 
+// UpdateService sends a fire-and-forget request to update a service
 func (ac *AuthorizationClient) UpdateService(s Service) error {
-	c := new(Command)
-	c.Command = UPDATESERVICE
-	c.Service = s
-	return ac.SendCommand(*c)
+	return ac.Send(UPDATESERVICE, s)
 }
 
+// UpdateLogin sends a fire-and-forget request to update login credentials
 func (ac *AuthorizationClient) UpdateLogin(l Login) error {
-	c := new(Command)
-	c.Command = UPDATELOGIN
-	c.Login = l
-	return ac.SendCommand(*c)
+	return ac.Send(UPDATELOGIN, l)
 }
 
 func (ac *AuthorizationClient) UpdateServiceState(state string, sip string) error {
@@ -440,27 +271,19 @@ func (ac *AuthorizationClient) UpdateServiceState(state string, sip string) erro
 	return nil
 }
 
+// UpdateValveState sends a fire-and-forget request to update valve state
 func (ac *AuthorizationClient) UpdateValveState(ip string, state1 string, state2 string) error {
-	c := new(Command)
-	c.Command = UPDATEVALVESTATE
-	c.ValveState = ValveState{
+	return ac.Send(UPDATEVALVESTATE, ValveState{
 		Ip:      ip,
 		VState1: state1,
 		VState2: state2,
-	}
-	return ac.SendCommand(*c)
+	})
 }
 
 // GetAllServices retrieves all configured services using request/reply.
 func (ac *AuthorizationClient) GetAllServices() []Service {
-	recvQueue := uniqueReplyQueue("authorization-getallservices")
-	fmt.Println("In GetAllServices")
-	c := Command{
-		Command:      GETALLSERVICES,
-		ReceiveQueue: recvQueue,
-	}
 	services := []Service{}
-	err := ac.requestReply(c, &services)
+	err := ac.Call(GETALLSERVICES, nil, &services)
 	if err != nil {
 		log.Print("Error getting all services: ", err)
 		return []Service{}
@@ -471,64 +294,40 @@ func (ac *AuthorizationClient) GetAllServices() []Service {
 // GetAllSystemTypes retrieves all configured system types using
 // request/reply.
 func (ac *AuthorizationClient) GetAllSystemTypes() []SystemType {
-	recvQueue := uniqueReplyQueue("authorization-getsystemtypes")
-	c := Command{
-		Command:      GETSYSTEMTYPES,
-		ReceiveQueue: recvQueue,
-	}
-	systemtype := []SystemType{}
-	err := ac.requestReply(c, &systemtype)
+	systemtypes := []SystemType{}
+	err := ac.Call(GETSYSTEMTYPES, nil, &systemtypes)
 	if err != nil {
-		log.Print("Error getting all services: ", err)
+		log.Print("Error getting all system types: ", err)
 		return []SystemType{}
 	}
-	return systemtype
+	return systemtypes
 }
 
 // GetValveStatus retrieves the current valve status using request/reply.
 func (ac *AuthorizationClient) GetValveStatus() []ValveState {
-	recvQueue := uniqueReplyQueue("authorization-getvalvestatus")
-	c := Command{
-		Command:      GETVALVESTATE,
-		ReceiveQueue: recvQueue,
-	}
 	valvestatus := []ValveState{}
-	err := ac.requestReply(c, &valvestatus)
+	err := ac.Call(GETVALVESTATE, nil, &valvestatus)
 	if err != nil {
 		log.Print("Error getting valve status: ", err)
 		return []ValveState{}
 	}
-	log.Print("valvestatus: ", valvestatus)
 	return valvestatus
 }
 
 // GetServiceWithIP retrieves one service by IP using request/reply.
 func (ac *AuthorizationClient) GetServiceWithIP(ip string) Service {
-	recvQueue := uniqueReplyQueue("authorization-getservice")
-	c := Command{
-		Command:      GETSERVICE,
-		ReceiveQueue: recvQueue,
-		Service: Service{
-			Ip: ip,
-		},
-	}
-	service := Service{}
-	err := ac.requestReply(c, &service)
+	svc := Service{}
+	err := ac.Call(GETSERVICE, Service{Ip: ip}, &svc)
 	if err != nil {
 		log.Print("Error getting service with ip: ", ip, " err: ", err)
 		return Service{}
 	}
-	return service
+	return svc
 }
 
 func (ac *AuthorizationClient) GetLogin() Login {
-	recvQueue := uniqueReplyQueue("authorization-getlogin")
-	c := Command{
-		Command:      GETLOGIN,
-		ReceiveQueue: recvQueue,
-	}
 	login := Login{}
-	err := ac.requestReply(c, &login)
+	err := ac.Call(GETLOGIN, nil, &login)
 	if err != nil {
 		log.Print("Error getting login: ", err)
 		return Login{}
@@ -536,25 +335,19 @@ func (ac *AuthorizationClient) GetLogin() Login {
 	return login
 }
 
+// AddServiceItem sends a fire-and-forget request to add a service item
 func (ac *AuthorizationClient) AddServiceItem(si ServiceItem) error {
-	c := new(Command)
-	c.Command = ADDSERVICEITEM
-	c.ServiceItem = si
-	return ac.SendCommand(*c)
+	return ac.Send(ADDSERVICEITEM, si)
 }
 
+// DeleteServiceItem sends a fire-and-forget request to delete a service item
 func (ac *AuthorizationClient) DeleteServiceItem(si ServiceItem) error {
-	c := new(Command)
-	c.Command = DELETESERVICEITEM
-	c.ServiceItem = si
-	return ac.SendCommand(*c)
+	return ac.Send(DELETESERVICEITEM, si)
 }
 
+// UpdateServiceX sends a fire-and-forget request to update a service (extended)
 func (ac *AuthorizationClient) UpdateServiceX(s Service) error {
-	c := new(Command)
-	c.Command = UPDATESERVICEX
-	c.Service = s
-	return ac.SendCommand(*c)
+	return ac.Send(UPDATESERVICEX, s)
 }
 
 func (ac *AuthorizationClient) UpdateServiceXState(state string, ip string) error {
@@ -566,11 +359,9 @@ func (ac *AuthorizationClient) UpdateServiceXState(state string, ip string) erro
 	)
 }
 
+// UpdateServiceItem sends a fire-and-forget request to update a service item
 func (ac *AuthorizationClient) UpdateServiceItem(si ServiceItem) error {
-	c := new(Command)
-	c.Command = UPDATESERVICEITEM
-	c.ServiceItem = si
-	return ac.SendCommand(*c)
+	return ac.Send(UPDATESERVICEITEM, si)
 }
 
 func (ac *AuthorizationClient) UpdateServiceItemState(state string, siip string) error {
@@ -593,39 +384,20 @@ func (ac *AuthorizationClient) UpdateServiceItemState(state string, siip string)
 // GetServiceItems retrieves the associated systems for a service IP using
 // request/reply.
 func (ac *AuthorizationClient) GetServiceItems(sip string) []ServiceItem {
-	recvQueue := uniqueReplyQueue("authorization-getserviceitems")
-	command := Command{
-		Command:      GETSERVICEITEMS,
-		ReceiveQueue: recvQueue,
-		ServiceItem: ServiceItem{
-			ServiceIP: sip,
-		},
-	}
 	serviceItems := []ServiceItem{}
-	err := ac.requestReply(command, &serviceItems)
+	err := ac.Call(GETSERVICEITEMS, ServiceItem{ServiceIP: sip}, &serviceItems)
 	if err != nil {
 		log.Print("Error reading service items: ", err)
 		return nil
 	}
-	fmt.Println("Get associated systems", serviceItems)
 	return serviceItems
 }
 
 // GetServiceItemWithIP retrieves exactly one service item by IP using
 // request/reply.
 func (ac *AuthorizationClient) GetServiceItemWithIP(siip string) ServiceItem {
-	recvQueue := uniqueReplyQueue("authorization-getserviceitem")
-	command := Command{
-		Command:      GETSERVICEITEM,
-		ReceiveQueue: recvQueue,
-		ServiceItem: ServiceItem{
-			Service: Service{
-				Ip: siip,
-			},
-		},
-	}
 	serviceItems := []ServiceItem{}
-	err := ac.requestReply(command, &serviceItems)
+	err := ac.Call(GETSERVICEITEM, ServiceItem{Service: Service{Ip: siip}}, &serviceItems)
 	if err != nil {
 		log.Print("Error reading service items: ", err)
 		return ServiceItem{}
@@ -637,9 +409,7 @@ func (ac *AuthorizationClient) GetServiceItemWithIP(siip string) ServiceItem {
 	return serviceItems[0]
 }
 
+// AddSystemType sends a fire-and-forget request to add a system type
 func (ac *AuthorizationClient) AddSystemType(sysType string) error {
-	c := new(Command)
-	c.Command = ADDSYSTEMTYPE
-	c.SystemType = SystemType(sysType)
-	return ac.SendCommand(*c)
+	return ac.Send(ADDSYSTEMTYPE, SystemType(sysType))
 }
